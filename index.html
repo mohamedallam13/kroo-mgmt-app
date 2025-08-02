@@ -808,6 +808,48 @@
             box-shadow: 0 8px 25px var(--color-primary-alpha-30);
         }
 
+        /* Global Loading Screen */
+        .global-loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: var(--color-bg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+
+        .global-loading-content {
+            text-align: center;
+            max-width: 400px;
+            padding: 40px;
+        }
+
+        .global-loading-spinner {
+            width: 80px;
+            height: 80px;
+            border: 6px solid var(--color-border);
+            border-top: 6px solid var(--color-primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 30px;
+        }
+
+        .global-loading-text {
+            font-size: 1.5rem;
+            color: var(--color-text-dark);
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .global-loading-subtext {
+            color: var(--color-text-muted);
+            font-size: 1rem;
+        }
+
         /* Loading Screen */
         .loading-screen {
             display: flex;
@@ -1271,7 +1313,16 @@
     </style>
 </head>
 <body>
-    <div class="app-container">
+    <!-- Global Loading Screen -->
+    <div id="globalLoadingScreen" class="global-loading-screen">
+        <div class="global-loading-content">
+            <div class="global-loading-spinner"></div>
+            <div class="global-loading-text">Loading Application</div>
+            <div class="global-loading-subtext">Please wait while we load your data...</div>
+        </div>
+    </div>
+
+    <div class="app-container" id="mainAppContainer" style="display: none;">
         <!-- Header -->
         <div class="header">
             <div class="header-content">
@@ -1509,8 +1560,8 @@
         }
         let html5QrcodeScanner = null;
 
-        // App Settings Configuration
-        const appSettings = {
+        // App Settings Configuration (will be loaded from backend)
+        let appSettings = {
             services: {
                 'public-area': {
                     enabled: true,
@@ -1804,7 +1855,8 @@
         
         // Activity Log Storage Key
         const ACTIVITY_LOG_KEY = 'kroo_activity_log';
-        const MAX_LOG_ENTRIES = 100; // Keep last 100 entries
+        const MAX_LOG_ENTRIES = 50; // Keep last 50 entries (reduced for better performance)
+        const MAX_LOG_AGE_DAYS = 30; // Remove logs older than 30 days
 
         // Add activity log entry
         function addActivityLog(action, details, status = 'success') {
@@ -1826,18 +1878,28 @@
                 // Get existing logs
                 const existingLogs = getActivityLogs();
                 
+                // Clean up old logs based on age
+                const cutoffDate = new Date();
+                cutoffDate.setDate(cutoffDate.getDate() - MAX_LOG_AGE_DAYS);
+                
+                const filteredLogs = existingLogs.filter(log => {
+                    const logDate = new Date(log.timestamp);
+                    return logDate > cutoffDate;
+                });
+                
                 // Add new entry at the beginning
-                existingLogs.unshift(logEntry);
+                filteredLogs.unshift(logEntry);
                 
                 // Keep only the last MAX_LOG_ENTRIES
-                if (existingLogs.length > MAX_LOG_ENTRIES) {
-                    existingLogs.splice(MAX_LOG_ENTRIES);
+                if (filteredLogs.length > MAX_LOG_ENTRIES) {
+                    filteredLogs.splice(MAX_LOG_ENTRIES);
                 }
                 
                 // Save to localStorage
-                localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify(existingLogs));
+                localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify(filteredLogs));
                 
                 console.log('📝 Activity logged:', logEntry);
+                console.log(`🗂️ Storage: ${filteredLogs.length}/${MAX_LOG_ENTRIES} entries`);
                 return logEntry;
             } catch (error) {
                 console.error('❌ Error saving activity log:', error);
@@ -1901,6 +1963,96 @@
             link.click();
             
             console.log('📤 Activity logs exported');
+        }
+
+        // Clean up old logs manually
+        function cleanupOldLogs() {
+            try {
+                const logs = getActivityLogs();
+                const cutoffDate = new Date();
+                cutoffDate.setDate(cutoffDate.getDate() - MAX_LOG_AGE_DAYS);
+                
+                const oldLogs = logs.filter(log => {
+                    const logDate = new Date(log.timestamp);
+                    return logDate <= cutoffDate;
+                });
+                
+                const newLogs = logs.filter(log => {
+                    const logDate = new Date(log.timestamp);
+                    return logDate > cutoffDate;
+                });
+                
+                localStorage.setItem(ACTIVITY_LOG_KEY, JSON.stringify(newLogs));
+                
+                console.log(`🧹 Cleaned up ${oldLogs.length} old logs (older than ${MAX_LOG_AGE_DAYS} days)`);
+                console.log(`🗂️ Remaining: ${newLogs.length} logs`);
+                
+                return oldLogs.length;
+            } catch (error) {
+                console.error('❌ Error cleaning up old logs:', error);
+                return 0;
+            }
+        }
+
+        // Get storage usage info
+        function getStorageInfo() {
+            try {
+                const logs = getActivityLogs();
+                const storageSize = JSON.stringify(logs).length;
+                const cutoffDate = new Date();
+                cutoffDate.setDate(cutoffDate.getDate() - MAX_LOG_AGE_DAYS);
+                
+                const oldLogs = logs.filter(log => {
+                    const logDate = new Date(log.timestamp);
+                    return logDate <= cutoffDate;
+                });
+                
+                return {
+                    totalEntries: logs.length,
+                    maxEntries: MAX_LOG_ENTRIES,
+                    oldEntries: oldLogs.length,
+                    storageSizeKB: Math.round(storageSize / 1024 * 100) / 100,
+                    maxAgeDays: MAX_LOG_AGE_DAYS
+                };
+            } catch (error) {
+                console.error('❌ Error getting storage info:', error);
+                return null;
+            }
+        }
+
+        // Refresh data from backend (manual refresh)
+        async function refreshDataFromBackend() {
+            try {
+                console.log('🔄 Manual refresh: Importing data from backend...');
+                
+                const success = await importDataFromBackend();
+                
+                if (success) {
+                    // Re-populate UI with new data
+                    populateMembers();
+                    populateServices();
+                    console.log('✅ Data refresh completed successfully');
+                    
+                    // Show success message
+                    if (typeof showNotification === 'function') {
+                        showNotification('Data refreshed successfully', 'success');
+                    }
+                } else {
+                    console.warn('⚠️ Data refresh failed, using existing data');
+                    if (typeof showNotification === 'function') {
+                        showNotification('Data refresh failed, using existing data', 'warning');
+                    }
+                }
+                
+                return success;
+                
+            } catch (error) {
+                console.error('❌ Error refreshing data:', error);
+                if (typeof showNotification === 'function') {
+                    showNotification('Error refreshing data', 'error');
+                }
+                return false;
+            }
         }
 
         // Load and display activity logs
@@ -2037,8 +2189,8 @@
         // updateServiceDropdown('room', 'roomNumber', ['Conference Room A', 'Conference Room B', 'Boardroom']);
         // configureService('desk', { title: 'Hot Desk Rental', description: 'Flexible desk booking' });
 
-        // Sample members data
-        const members = [
+        // Sample members data (will be loaded from backend)
+        let members = [
         { id: 'M000', name: 'Marlen Botros', email: 'Marlenbotros@gmail.com', type: 'Premium Member', avatar: 'JS' },
             { id: 'M001', name: 'John Smith', email: 'john.smith@email.com', type: 'Premium Member', avatar: 'JS' },
             { id: 'M002', name: 'Sarah Johnson', email: 'sarah.j@email.com', type: 'Basic Member', avatar: 'SJ' },
@@ -2198,12 +2350,120 @@
             return fieldHTML;
         }
 
+        // Import data from backend
+        async function importDataFromBackend() {
+            try {
+                console.log('🔄 Starting data import from backend...');
+                
+                // Check if Google Apps Script API is available
+                if (typeof google !== 'undefined' && google.script && google.script.run) {
+                    console.log('📡 Google Apps Script API available, importing data...');
+                    
+                    // Import both members and configs in one call
+                    const importPromise = new Promise((resolve, reject) => {
+                        google.script.run
+                            .withSuccessHandler((result) => {
+                                console.log('✅ Backend data received:', result);
+                                resolve(result);
+                            })
+                            .withFailureHandler((error) => {
+                                console.error('❌ Backend import failed:', error);
+                                reject(error);
+                            })
+                            .importAppData();
+                    });
+                    
+                    const backendDataString = await importPromise;
+                    const backendData = JSON.parse(backendDataString)
+                    
+                    // Parse and update members data
+                    if (backendData.members && Array.isArray(backendData.members)) {
+                        // Set default member type for any members without a type
+                        members = backendData.members.map(member => ({
+                            ...member,
+                            type: member.type || 'Regular Member'
+                        }));
+                        console.log(`👥 Loaded ${members.length} members from backend`);
+                    } else {
+                        console.warn('⚠️ No members data from backend, using fallback');
+                    }
+                    
+                    // Parse and update app settings
+                    if (backendData.config && typeof backendData.config === 'object') {
+                        appSettings = backendData.config;
+                        console.log('⚙️ Loaded app configuration from backend');
+                    } else {
+                        console.warn('⚠️ No config data from backend, using fallback');
+                    }
+                    
+                } else {
+                    console.log('⚠️ Google Apps Script API not available, using fallback data');
+                    // Use fallback data (existing hardcoded data)
+                }
+                
+                console.log('✅ Data import completed');
+                return true;
+                
+            } catch (error) {
+                console.error('❌ Error importing data:', error);
+                // Continue with fallback data
+                return false;
+            }
+        }
+
         // Initialize app
-        document.addEventListener('DOMContentLoaded', function() {
-            updateTime();
-            setInterval(updateTime, 1000);
-            populateMembers();
-            populateServices(); // Populate services from settings
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('🚀 Starting application initialization...');
+            
+            // Show global loading screen
+            const globalLoading = document.getElementById('globalLoadingScreen');
+            const mainApp = document.getElementById('mainAppContainer');
+            
+            try {
+                // Import data from backend
+                await importDataFromBackend();
+                
+                // Initialize app components
+                updateTime();
+                setInterval(updateTime, 1000);
+                populateMembers();
+                populateServices(); // Populate services from settings
+                
+                // Clean up old logs on app start
+                setTimeout(() => {
+                    const cleanedCount = cleanupOldLogs();
+                    if (cleanedCount > 0) {
+                        console.log(`🧹 Auto-cleanup: Removed ${cleanedCount} old logs`);
+                    }
+                    
+                    // Log storage info
+                    const storageInfo = getStorageInfo();
+                    if (storageInfo) {
+                        console.log(`🗂️ Storage: ${storageInfo.totalEntries}/${storageInfo.maxEntries} entries (${storageInfo.storageSizeKB}KB)`);
+                    }
+                }, 1000);
+                
+                // Hide loading screen and show app
+                globalLoading.style.display = 'none';
+                mainApp.style.display = 'block';
+                
+                console.log('✅ Application initialization completed');
+                
+            } catch (error) {
+                console.error('❌ Application initialization failed:', error);
+                
+                // Show error message but still load app with fallback data
+                const loadingText = document.querySelector('.global-loading-text');
+                const loadingSubtext = document.querySelector('.global-loading-subtext');
+                
+                if (loadingText) loadingText.textContent = 'Loading Failed';
+                if (loadingSubtext) loadingSubtext.textContent = 'Using fallback data...';
+                
+                setTimeout(() => {
+                    globalLoading.style.display = 'none';
+                    mainApp.style.display = 'block';
+                }, 2000);
+            }
         });
 
         function updateTime() {
